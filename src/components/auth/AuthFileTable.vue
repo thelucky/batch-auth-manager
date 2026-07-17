@@ -246,7 +246,7 @@ const { selectedItems: selectedFiles, allSelected, isSelected, toggleSelection, 
 // Local State
 const batchLoading = ref(false)
 const refreshAllQuotaLoading = ref(false)
-const autoRefreshQuota = ref(true)
+const autoRefreshQuota = ref(false)
 const uploadLoading = ref(false)
 const modelsLoading = ref(false)
 const editLoading = ref(false)
