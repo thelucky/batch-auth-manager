@@ -37,7 +37,7 @@ import {
   getQuotaPercentClass
 } from '../../config/constants'
 import { generateAvailabilityPointsFromUsage } from '../../utils/availability'
-import { formatResetTime } from '../../utils/quota'
+import { formatResetTime, formatQuotaPlanType } from '../../utils/quota'
 import { usePagination } from '../../composables/usePagination'
 import { useTableSelection } from '../../composables/useTableSelection'
 import { useUsageStore } from '../../stores/usage'
@@ -691,7 +691,7 @@ const resolvePlanType = (file: any): string | null => {
 }
 
 const formatPlanTypeLabel = (planType: string) => {
-  return planType
+  return formatQuotaPlanType(planType)
     .replace(/[_-]+/g, ' ')
     .replace(/\b\w/g, (letter) => letter.toUpperCase())
 }

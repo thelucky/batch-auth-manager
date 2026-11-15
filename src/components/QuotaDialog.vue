@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { useQuotaStore, quotaKey } from '../stores/quota'
 import { useQuotaLoader } from '../composables/useQuotaLoader'
-import { formatResetTime } from '../utils/quota'
+import { formatResetTime, formatQuotaPlanType } from '../utils/quota'
 import Dialog from './ui/dialog/Dialog.vue'
 import Button from './ui/Button.vue'
 import { RefreshCw, AlertCircle } from 'lucide-vue-next'
@@ -195,7 +195,7 @@ function formatUpdatedAt(timestamp?: number | null) {
       <div v-else-if="quotaResult?.type === 'codex'" class="space-y-3">
         <div v-if="quotaResult.data.planType" class="text-sm px-3 py-1.5 rounded-lg bg-gray-50">
           <span class="font-medium">计划类型:</span>
-          <span class="ml-2">{{ quotaResult.data.planType }}</span>
+          <span class="ml-2">{{ formatQuotaPlanType(quotaResult.data.planType) }}</span>
           <span v-if="quotaResult.data.campaignId" class="ml-3 text-xs text-gray-500">
             活动: {{ quotaResult.data.campaignId }}
           </span>

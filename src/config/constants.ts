@@ -53,8 +53,15 @@ export const PROVIDER_CONFIG = {
 }
 
 /**
- * 配额百分比配置
+ * 账号套餐显示名称
  */
+export const CODEX_PLAN_LABELS: Record<string, string> = {
+  prolite: 'Pro 100',
+  pro: 'Pro 200',
+  promax: 'Pro 500',
+}
+
+/** 配额百分比配置 */
 export const QUOTA_CONFIG = {
   // 阈值配置
   thresholds: {

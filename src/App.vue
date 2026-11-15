@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, watch, computed } from 'vue'
+import { ref, reactive, watch, computed, onBeforeUnmount } from 'vue'
 import { useAuthStore } from './stores/auth'
 import { useQuotaStore } from './stores/quota'
 import { useNotificationStore } from './stores/notification'
@@ -18,15 +18,26 @@ import Label from './components/ui/Label.vue'
 import ToastContainer from './components/ui/toast/ToastContainer.vue'
 import ConfirmDialog from './components/ui/toast/ConfirmDialog.vue'
 import LogViewer from './components/logs/LogViewer.vue'
+import MultiServerQuotaPage from './components/MultiServerQuotaPage.vue'
 import { Server, Loader2, LayoutDashboard, FileText, Settings, LogOut, ScrollText, Sliders, ShieldCheck, Filter, CloudUpload } from 'lucide-vue-next'
 
 const notificationStore = useNotificationStore()
 
 const authStore = useAuthStore()
 const quotaStore = useQuotaStore()
-const activeTab = ref('files')
+const QUOTA_ROUTE = '#/quota'
+const activeTab = ref(window.location.hash === QUOTA_ROUTE ? 'quota' : 'files')
 
-const showConnectDialog = ref(!authStore.isConnected && !authStore.restoring)
+const showConnectDialog = ref(activeTab.value !== 'quota' && !authStore.isConnected && !authStore.restoring)
+const syncRoute = () => {
+  activeTab.value = window.location.hash === QUOTA_ROUTE ? 'quota' : 'files'
+  if (activeTab.value === 'quota') showConnectDialog.value = false
+}
+const toggleQuotaPage = () => {
+  window.location.hash = activeTab.value === 'quota' ? '' : QUOTA_ROUTE
+}
+window.addEventListener('hashchange', syncRoute)
+onBeforeUnmount(() => window.removeEventListener('hashchange', syncRoute))
 const connecting = ref(false)
 const fileStats = ref({ jsonCached: 0, jsonTotal: 0, quotaCached: 0, usageFetchedAt: null as number | null })
 
@@ -51,7 +62,7 @@ watch(() => authStore.isConnected, (connected) => {
 })
 
 watch(() => authStore.restoring, (restoring) => {
-  if (!restoring && !authStore.isConnected) {
+  if (!restoring && !authStore.isConnected && activeTab.value !== 'quota') {
     showConnectDialog.value = true
   }
 })
@@ -103,6 +114,9 @@ const handleDisconnect = async () => {
         </div>
         <div class="flex flex-col items-start sm:items-end gap-2">
           <div class="flex items-center gap-2">
+            <Button size="sm" variant="outline" @click="toggleQuotaPage">
+              {{ activeTab === 'quota' ? '返回管理' : '统一额度' }}
+            </Button>
             <Badge v-if="authStore.isConnected" variant="outline" class="h-8 gap-1 bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800">
               <div class="h-1.5 w-1.5 rounded-full bg-green-600 dark:bg-green-400" />
               已连接
@@ -133,7 +147,7 @@ const handleDisconnect = async () => {
       </div>
 
       <!-- Navigation -->
-      <div v-if="authStore.isConnected" class="flex items-center gap-4 border-b mb-6">
+      <div v-if="authStore.isConnected && activeTab !== 'quota'" class="flex items-center gap-4 border-b mb-6">
         <button
           @click="activeTab = 'files'"
           class="flex items-center gap-2 px-4 py-2 border-b-2 text-sm font-medium transition-colors hover:text-primary"
@@ -201,6 +215,9 @@ const handleDisconnect = async () => {
       </div>
 
       <!-- Main Content -->
+      <KeepAlive>
+        <MultiServerQuotaPage v-if="activeTab === 'quota'" />
+      </KeepAlive>
       <div v-if="authStore.isConnected" class="space-y-6 animate-in fade-in-50 slide-in-from-bottom-4 duration-500">
         <KeepAlive>
           <AuthFileTable v-if="activeTab === 'files'" @stats="fileStats = $event" />
@@ -214,12 +231,12 @@ const handleDisconnect = async () => {
         <WebDavBackupPage v-if="activeTab === 'webdav'" />
       </div>
       
-      <div v-else-if="authStore.restoring" class="flex h-[400px] flex-col items-center justify-center rounded-lg border border-dashed text-center animate-in fade-in-50">
+      <div v-else-if="authStore.restoring && activeTab !== 'quota'" class="flex h-[400px] flex-col items-center justify-center rounded-lg border border-dashed text-center animate-in fade-in-50">
         <Loader2 class="h-8 w-8 animate-spin text-muted-foreground" />
         <p class="mt-4 text-sm text-muted-foreground">正在恢复连接...</p>
       </div>
 
-      <div v-else class="flex h-[400px] flex-col items-center justify-center rounded-lg border border-dashed text-center animate-in fade-in-50">
+      <div v-else-if="activeTab !== 'quota'" class="flex h-[400px] flex-col items-center justify-center rounded-lg border border-dashed text-center animate-in fade-in-50">
         <div class="rounded-full bg-muted p-3">
           <Server class="h-6 w-6 text-muted-foreground" />
         </div>

@@ -2,7 +2,7 @@ import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios'
 
 type UnauthorizedHandler = () => void
 
-class RequestClient {
+export class RequestClient {
   private client: AxiosInstance | null = null
   private baseURL: string = ''
   private managementKey: string = ''
@@ -15,6 +15,7 @@ class RequestClient {
   initialize(baseURL: string, managementKey: string) {
     this.baseURL = baseURL.replace(/\/$/, '')
     this.managementKey = managementKey
+    const key = this.managementKey
 
     this.client = axios.create({
       baseURL: this.baseURL,
@@ -27,8 +28,8 @@ class RequestClient {
     // Request interceptor
     this.client.interceptors.request.use(
       (config) => {
-        if (this.managementKey) {
-          config.headers.Authorization = `Bearer ${this.managementKey}`
+        if (key) {
+          config.headers.Authorization = `Bearer ${key}`
         }
         return config
       },

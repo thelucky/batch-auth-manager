@@ -1,5 +1,4 @@
-import { request } from '../lib/request'
-import { authFilesApi } from './authFiles'
+import { request, type RequestClient } from '../lib/request'
 
 interface ApiCallRequest {
   authIndex: string
@@ -20,8 +19,8 @@ interface ApiCallResponse {
  * General API Call (via CLIProxyAPI)
  */
 export const apiCallApi = {
-  async request({ authIndex, method, url, header, data }: ApiCallRequest): Promise<ApiCallResponse> {
-    const response: any = await request.post('/v0/management/api-call', {
+  async request({ authIndex, method, url, header, data }: ApiCallRequest, client: RequestClient = request): Promise<ApiCallResponse> {
+    const response: any = await client.post('/v0/management/api-call', {
       auth_index: authIndex,
       method,
       url,
@@ -55,9 +54,9 @@ function parseBody(body: any): any {
 /**
  * Helper: download and parse auth file JSON
  */
-async function downloadAuthFileJson(fileName: string): Promise<any> {
+async function downloadAuthFileJson(fileName: string, client: RequestClient): Promise<any> {
   try {
-    const blob = await authFilesApi.download(fileName)
+    const blob = await client.get<Blob>(`/v0/management/auth-files/download?name=${encodeURIComponent(fileName)}`, { responseType: 'blob' })
     const text = await blob.text()
     const trimmed = text.trim()
     if (!trimmed) return null
@@ -73,8 +72,8 @@ const alphaSortCollator = new Intl.Collator('en', { numeric: true, sensitivity: 
 /**
  * Resolve Antigravity project_id from auth file content
  */
-async function resolveAntigravityProjectId(fileName: string): Promise<string> {
-  const parsed = await downloadAuthFileJson(fileName)
+async function resolveAntigravityProjectId(fileName: string, client: RequestClient): Promise<string> {
+  const parsed = await downloadAuthFileJson(fileName, client)
   if (!parsed || typeof parsed !== 'object') return DEFAULT_ANTIGRAVITY_PROJECT_ID
 
   const topLevel = parsed.project_id ?? parsed.projectId
@@ -98,8 +97,8 @@ async function resolveAntigravityProjectId(fileName: string): Promise<string> {
 /**
  * Resolve Gemini CLI project_id from auth file account field
  */
-async function resolveGeminiCliProjectId(fileName: string): Promise<string | null> {
-  const parsed = await downloadAuthFileJson(fileName)
+async function resolveGeminiCliProjectId(fileName: string, client: RequestClient): Promise<string | null> {
+  const parsed = await downloadAuthFileJson(fileName, client)
   if (!parsed || typeof parsed !== 'object') return null
 
   const account = parsed.account
@@ -154,7 +153,7 @@ function extractAccountIdFromIdToken(idToken: any): string | null {
 /**
  * Resolve Codex chatgpt_account_id (multi-source: file listing → raw auth file)
  */
-async function resolveCodexAccountId(file: any): Promise<string | null> {
+async function resolveCodexAccountId(file: any, client: RequestClient): Promise<string | null> {
   // 1. Try from file listing object (id_token may already be decoded)
   const candidates = [
     file.id_token ?? file.idToken,
@@ -167,7 +166,7 @@ async function resolveCodexAccountId(file: any): Promise<string | null> {
   }
 
   // 2. Fallback: download raw auth file
-  const parsed = await downloadAuthFileJson(file.name)
+  const parsed = await downloadAuthFileJson(file.name, client)
   if (parsed && typeof parsed === 'object') {
     const rawIdToken = parsed.id_token ?? parsed.idToken
     const id = extractAccountIdFromIdToken(rawIdToken)
@@ -226,7 +225,7 @@ export const antigravityQuota = {
     'https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels'
   ],
 
-  async fetch(file: any): Promise<any> {
+  async fetch(file: any, client: RequestClient = request): Promise<any> {
     const authIndex = file.authIndex || file.auth_index
     const header = {
       'Authorization': 'Bearer $TOKEN$',
@@ -234,7 +233,7 @@ export const antigravityQuota = {
       'User-Agent': 'antigravity/1.19.5 windows/amd64'
     }
 
-    const projectId = await resolveAntigravityProjectId(file.name)
+    const projectId = await resolveAntigravityProjectId(file.name, client)
     const requestBody = JSON.stringify({ project: projectId })
 
     let lastError = null
@@ -247,7 +246,7 @@ export const antigravityQuota = {
           url,
           header,
           data: requestBody
-        })
+        }, client)
 
         if (result.statusCode >= 200 && result.statusCode < 300 && result.body) {
           return this.parse(result.body)
@@ -421,14 +420,14 @@ export const antigravityQuota = {
 export const geminiCliQuota = {
   URL: 'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota',
 
-  async fetch(file: any): Promise<any> {
+  async fetch(file: any, client: RequestClient = request): Promise<any> {
     const authIndex = file.authIndex || file.auth_index
     const header = {
       'Authorization': 'Bearer $TOKEN$',
       'Content-Type': 'application/json'
     }
 
-    const projectId = await resolveGeminiCliProjectId(file.name)
+    const projectId = await resolveGeminiCliProjectId(file.name, client)
     const data = projectId ? JSON.stringify({ project: projectId }) : JSON.stringify({})
 
     const result = await apiCallApi.request({
@@ -437,7 +436,7 @@ export const geminiCliQuota = {
       url: this.URL,
       header,
       data
-    })
+    }, client)
 
     if (result.statusCode < 200 || result.statusCode >= 300) {
       throw new Error(result.bodyText || `HTTP ${result.statusCode}`)
@@ -502,17 +501,21 @@ export const geminiCliQuota = {
 /**
  * Codex Quota
  */
+export type AccountDetailKind = 'subscription' | 'resetCredits'
+
 export const codexQuota = {
   URL: 'https://chatgpt.com/backend-api/wham/usage',
+  SUBSCRIPTIONS_URL: 'https://chatgpt.com/backend-api/subscriptions',
+  RESET_CREDITS_URL: 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits',
 
-  async fetch(file: any): Promise<any> {
+  async fetch(file: any, client: RequestClient = request): Promise<any> {
     const authIndex = file.authIndex || file.auth_index
     const header: Record<string, string> = {
       'Authorization': 'Bearer $TOKEN$',
       'User-Agent': 'codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal'
     }
 
-    const accountId = await resolveCodexAccountId(file)
+    const accountId = await resolveCodexAccountId(file, client)
     if (!accountId) {
       throw new Error('Missing chatgpt_account_id in id_token')
     }
@@ -525,13 +528,61 @@ export const codexQuota = {
       method: 'GET',
       url: this.URL,
       header
-    })
+    }, client)
 
     if (result.statusCode < 200 || result.statusCode >= 300) {
       throw new Error(result.bodyText || `HTTP ${result.statusCode}`)
     }
 
     return this.parse(result.body, planTypeFromFile)
+  },
+
+  async fetchAccountDetails(file: any, kind: AccountDetailKind, client: RequestClient = request): Promise<any> {
+    const accountId = await resolveCodexAccountId(file, client)
+    if (!accountId) throw new Error('Missing chatgpt_account_id in id_token')
+    const header = {
+      Authorization: 'Bearer $TOKEN$',
+      'User-Agent': 'codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal',
+      'Chatgpt-Account-Id': accountId,
+      Accept: 'application/json',
+      'OpenAI-Beta': 'codex-1',
+      originator: 'Codex Desktop',
+      'oai-product-sku': 'CODEX'
+    }
+    const url = kind === 'subscription'
+      ? `${this.SUBSCRIPTIONS_URL}?account_id=${encodeURIComponent(accountId)}`
+      : this.RESET_CREDITS_URL
+    const response = await apiCallApi.request({ authIndex: file.authIndex || file.auth_index, method: 'GET', url, header }, client)
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw new Error(`查询失败（HTTP ${response.statusCode}）`)
+    }
+    const details = response.body
+    if (!details || typeof details !== 'object' || Array.isArray(details)) {
+      throw new Error('接口未返回有效数据')
+    }
+    if (details.account_id && details.account_id !== accountId) {
+      throw new Error('返回的账号与当前账号不一致')
+    }
+    if (kind === 'subscription') {
+      return {
+        activeUntil: parseAccountTimestamp(details.active_until),
+        willRenew: typeof details.will_renew === 'boolean' ? details.will_renew : null
+      }
+    }
+    const count = parseNonNegativeNumber(details.available_count)
+    const credits = Array.isArray(details.credits) ? details.credits
+        .filter((credit: any) => credit.status === 'available' && credit.reset_type === 'codex_rate_limits')
+        .map((credit: any) => ({
+          id: credit.id,
+          expiresAt: parseAccountTimestamp(credit.expires_at),
+          noExpiry: credit.expires_at === null
+        }))
+        .sort((a: any, b: any) => (a.expiresAt ?? Infinity) - (b.expiresAt ?? Infinity)) : null
+    return {
+      availableCount: count !== null && Number.isInteger(count) ? count : null,
+      credits,
+      error: credits === null ? '接口未返回重置明细' : null
+    }
   },
 
   parse(data: any, planTypeFromFile?: string | null): any {
@@ -640,8 +691,35 @@ export const codexQuota = {
 
     const campaignId = data.promo?.campaign_id || null
 
-    return { planType, limits, campaignId }
+    const balance = parseNonNegativeNumber(data.credits?.balance)
+    const count = parseNonNegativeNumber(data.rate_limit_reset_credits?.available_count)
+    return {
+      planType, limits, campaignId,
+      creditBalance: balance ?? (data.credits?.has_credits === false ? 0 : null),
+      unlimitedCredits: data.credits?.unlimited === true,
+      resetCredits: {
+        availableCount: count !== null && Number.isInteger(count) ? count : null,
+        credits: count === 0 ? [] : null,
+        error: null
+      }
+    }
   }
+}
+
+function parseNonNegativeNumber(value: unknown): number | null {
+  if (typeof value !== 'number' && typeof value !== 'string') return null
+  if (typeof value === 'string' && !value.trim()) return null
+  const number = Number(value)
+  return Number.isFinite(number) && number >= 0 ? number : null
+}
+
+/** 订阅/重置明细支持 ISO 日期和 Unix 秒时间戳，统一为毫秒。 */
+function parseAccountTimestamp(value: unknown): number | null {
+  if (typeof value !== 'number' && typeof value !== 'string') return null
+  if (typeof value === 'string' && !value.trim()) return null
+  const number = Number(value)
+  const timestamp = Number.isFinite(number) ? number * 1000 : Date.parse(String(value))
+  return Number.isFinite(timestamp) && timestamp > 0 && !isNaN(new Date(timestamp).getTime()) ? timestamp : null
 }
 
 export interface QuotaResult {
@@ -649,7 +727,7 @@ export interface QuotaResult {
   data: any
 }
 
-export async function fetchQuotaByType(file: any): Promise<QuotaResult> {
+export async function fetchQuotaByType(file: any, client: RequestClient = request): Promise<QuotaResult> {
   const type = (file.type || '').toLowerCase()
   const authIndex = file.authIndex || file.auth_index
 
@@ -661,19 +739,19 @@ export async function fetchQuotaByType(file: any): Promise<QuotaResult> {
     case 'antigravity':
       return {
         type: 'antigravity',
-        data: await antigravityQuota.fetch(file)
+        data: await antigravityQuota.fetch(file, client)
       }
 
     case 'gemini-cli':
       return {
         type: 'gemini-cli',
-        data: await geminiCliQuota.fetch(file)
+        data: await geminiCliQuota.fetch(file, client)
       }
 
     case 'codex':
       return {
         type: 'codex',
-        data: await codexQuota.fetch(file)
+        data: await codexQuota.fetch(file, client)
       }
 
     default:
