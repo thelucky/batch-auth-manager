@@ -34,15 +34,12 @@ interface ServerState {
   loaded: boolean
   error: string
   total: number
-  checkedAt: number
 }
 
 const STORAGE_KEY = 'quota-servers'
 const CACHE_PREFIX = 'quota-server-cache:'
 const CACHE_VERSION = 1
 const CONCURRENCY = 5
-const SUCCESS_TTL_MS = 5 * 60 * 1000
-const ERROR_TTL_MS = 60 * 1000
 const authStore = useAuthStore()
 const notifications = useNotificationStore()
 
@@ -68,7 +65,7 @@ const form = ref<ServerProfile>({ id: '', name: '', url: '', key: '' })
 const visibleServers = computed(() => servers.value.filter(server => !filter.value || server.id === filter.value))
 
 function stateFor(id: string): ServerState {
-  return states[id] ||= { files: [], entries: {}, loadingFile: {}, loading: false, loaded: false, error: '', total: 0, checkedAt: 0 }
+  return states[id] ||= { files: [], entries: {}, loadingFile: {}, loading: false, loaded: false, error: '', total: 0 }
 }
 
 function readCache(): Record<string, ServerState> {
@@ -78,25 +75,25 @@ function readCache(): Record<string, ServerState> {
       const cached = JSON.parse(localStorage.getItem(`${CACHE_PREFIX}${server.id}`) || 'null')
       const state = cached?.state
       if (cached?.version !== CACHE_VERSION || cached.url !== server.url || !Array.isArray(state?.files) ||
-        !state.entries || typeof state.entries !== 'object' || typeof state.checkedAt !== 'number') continue
+        !state.entries || typeof state.entries !== 'object') continue
       restored[server.id] = { ...state, loading: false, loadingFile: {} }
     } catch {
-      // 缓存缺失或损坏时，重新查询该服务器。
+      // 缓存缺失或损坏时，等待用户手动刷新。
     }
   }
   return restored
 }
 
 function saveCache(server: ServerProfile) {
-  const { files, entries, loaded, error, total, checkedAt } = stateFor(server.id)
+  const { files, entries, loaded, error, total } = stateFor(server.id)
   try {
     localStorage.setItem(`${CACHE_PREFIX}${server.id}`, JSON.stringify({
       version: CACHE_VERSION,
       url: server.url,
-      state: { files, entries, loaded, error, total, checkedAt }
+      state: { files, entries, loaded, error, total }
     }))
   } catch {
-    notifications.warning('额度缓存保存失败，刷新页面后将重新查询')
+    notifications.warning('额度缓存保存失败，刷新页面后需手动查询')
   }
 }
 
@@ -226,32 +223,24 @@ async function removeServer(server: ServerProfile) {
   if (filter.value === server.id) filter.value = ''
 }
 
-async function loadServer(server: ServerProfile, force: boolean) {
+async function loadServer(server: ServerProfile) {
   const state = stateFor(server.id)
   const client = new RequestClient()
   client.initialize(server.url, server.key)
-  const listExpired = Date.now() - state.checkedAt >= (state.error ? ERROR_TTL_MS : SUCCESS_TTL_MS)
-  if (!force && state.error && !listExpired) return
   state.loading = true
   try {
-    if (force || !state.loaded || listExpired) {
-      const response = await client.get<AuthFilesResponse>('/v0/management/auth-files')
-      const files = response.files || []
-      state.total = files.length
-      state.files = files.filter(file => supportsQuota(file.type))
-      state.loaded = true
-      state.error = ''
-      state.checkedAt = Date.now()
-      const names = new Set(state.files.map(file => file.name))
-      for (const name of Object.keys(state.entries)) {
-        if (!names.has(name)) delete state.entries[name]
-      }
-      saveCache(server)
+    const response = await client.get<AuthFilesResponse>('/v0/management/auth-files')
+    const files = response.files || []
+    state.total = files.length
+    state.files = files.filter(file => supportsQuota(file.type))
+    state.loaded = true
+    state.error = ''
+    const names = new Set(state.files.map(file => file.name))
+    for (const name of Object.keys(state.entries)) {
+      if (!names.has(name)) delete state.entries[name]
     }
-    const targets = state.files.filter(file => {
-      const entry = state.entries[file.name]
-      return force || !entry || Date.now() - entry.updatedAt >= (entry.error ? ERROR_TTL_MS : SUCCESS_TTL_MS)
-    })
+    saveCache(server)
+    const targets = state.files
     for (let index = 0; index < targets.length; index += CONCURRENCY) {
       await Promise.all(targets.slice(index, index + CONCURRENCY).map(async file => {
         state.loadingFile[file.name] = true
@@ -276,25 +265,22 @@ async function loadServer(server: ServerProfile, force: boolean) {
     }
   } catch (error: any) {
     state.error = error.message || '连接失败'
-    state.checkedAt = Date.now()
     saveCache(server)
   } finally {
     state.loading = false
   }
 }
 
-async function refresh(targets: ServerProfile[], force = true) {
+async function refresh(targets: ServerProfile[]) {
   if (querying.value) return
   querying.value = true
   try {
-    for (const server of targets) await loadServer(server, force)
+    for (const server of targets) await loadServer(server)
   } finally {
     querying.value = false
   }
 }
 
-// 先展示浏览器缓存，仅补查缺失或过期的数据；手动刷新仍强制查询。
-if (servers.value.length) void refresh(servers.value, false)
 </script>
 
 <template>
@@ -360,8 +346,8 @@ if (servers.value.length) void refresh(servers.value, false)
               <span v-else-if="stateFor(server.id).entries[file.name]?.error" class="break-all text-destructive">{{ stateFor(server.id).entries[file.name].error }}</span>
               <div v-else-if="quotaItems(stateFor(server.id).entries[file.name]).length" class="space-y-1">
                 <div v-for="item in quotaItems(stateFor(server.id).entries[file.name])" :key="item.name" class="text-xs">
-                  <div class="flex items-center justify-between gap-3">
-                    <span class="text-muted-foreground">{{ item.name }}<span v-if="item.resetTime" class="ml-2">{{ formatResetTime(item.resetTime) }}</span></span>
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-muted-foreground">{{ item.name }}<span v-if="item.resetTime" class="ml-2">{{ formatResetTime(item.resetTime, true) }}</span></span>
                     <span :class="item.percent === null ? 'text-muted-foreground' : getQuotaPercentClass(item.percent)" class="shrink-0">{{ item.percent === null ? '无法获取' : `${item.percent}%` }}</span>
                   </div>
                   <div v-if="item.percent !== null" class="mt-0.5 h-1 w-full overflow-hidden rounded-full bg-muted" role="progressbar" :aria-label="`${item.name} 剩余配额`" :aria-valuenow="item.percent" :aria-valuemin="0" :aria-valuemax="100">
