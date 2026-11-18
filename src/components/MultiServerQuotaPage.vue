@@ -326,7 +326,7 @@ async function refresh(targets: ServerProfile[]) {
         <colgroup>
           <col />
           <col class="w-20" />
-          <col class="w-52" />
+          <col class="w-64" />
           <col class="w-44" />
           <col class="w-24" />
           <col class="w-36" />
