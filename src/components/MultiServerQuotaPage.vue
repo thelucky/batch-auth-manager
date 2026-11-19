@@ -57,7 +57,7 @@ function readServers(): ServerProfile[] {
 const servers = ref<ServerProfile[]>(readServers())
 // 外层按服务器固定 ID 隔离，内层保留原文件名；不会与管理页面的缓存混用。
 const states = reactive<Record<string, ServerState>>(readCache())
-const querying = ref(false)
+const querying = computed(() => Object.values(states).some(state => state.loading))
 const filter = ref('')
 const search = ref('')
 const showEditor = ref(false)
@@ -141,10 +141,11 @@ function formatCreditBalance(data: any) {
 }
 
 async function queryAccountDetails(server: ServerProfile, file: AuthFile, kind: AccountDetailKind) {
-  if (querying.value) return
+  const state = stateFor(server.id)
+  if (state.loading) return
   const data = accountDetails(server.id, file.name)
   if (!data) return
-  querying.value = true
+  state.loading = true
   const client = new RequestClient()
   client.initialize(server.url, server.key)
   try {
@@ -156,7 +157,7 @@ async function queryAccountDetails(server: ServerProfile, file: AuthFile, kind: 
   } catch (error: any) {
     notifications.error(error.message || '查询失败')
   } finally {
-    querying.value = false
+    state.loading = false
   }
 }
 
@@ -225,6 +226,7 @@ async function removeServer(server: ServerProfile) {
 
 async function loadServer(server: ServerProfile) {
   const state = stateFor(server.id)
+  if (state.loading) return
   const client = new RequestClient()
   client.initialize(server.url, server.key)
   state.loading = true
@@ -272,13 +274,7 @@ async function loadServer(server: ServerProfile) {
 }
 
 async function refresh(targets: ServerProfile[]) {
-  if (querying.value) return
-  querying.value = true
-  try {
-    for (const server of targets) await loadServer(server)
-  } finally {
-    querying.value = false
-  }
+  await Promise.all(targets.map(server => loadServer(server)))
 }
 
 </script>
@@ -318,7 +314,7 @@ async function refresh(targets: ServerProfile[]) {
         <div class="flex gap-2">
           <Button size="sm" variant="outline" :disabled="querying" @click="editServer(server)">编辑</Button>
           <Button size="sm" variant="outline" :disabled="querying" @click="removeServer(server)">移除</Button>
-          <Button size="sm" :disabled="querying" @click="refresh([server])">{{ stateFor(server.id).loading ? '查询中…' : '刷新额度' }}</Button>
+          <Button size="sm" :disabled="stateFor(server.id).loading" @click="refresh([server])">{{ stateFor(server.id).loading ? '查询中…' : '刷新额度' }}</Button>
         </div>
       </div>
       <p v-if="stateFor(server.id).error" class="break-all p-4 text-sm text-destructive">连接失败：{{ stateFor(server.id).error }}。{{ stateFor(server.id).loaded ? '下方为上次查询结果。' : '' }}</p>
@@ -361,7 +357,7 @@ async function refresh(targets: ServerProfile[]) {
               <template v-if="accountDetails(server.id, file.name)">
                 <div class="flex items-center gap-1">
                   <span :title="accountDetails(server.id, file.name).subscriptionError || ''">{{ formatAccountDate(accountDetails(server.id, file.name).subscription?.activeUntil) }}</span>
-                  <Button size="icon" variant="ghost" class="h-6 w-6 shrink-0 text-muted-foreground" title="查询续期时间" aria-label="查询续期时间" :disabled="querying" @click="queryAccountDetails(server, file, 'subscription')"><CircleHelp class="h-4 w-4" /></Button>
+                  <Button size="icon" variant="ghost" class="h-6 w-6 shrink-0 text-muted-foreground" title="查询续期时间" aria-label="查询续期时间" :disabled="stateFor(server.id).loading" @click="queryAccountDetails(server, file, 'subscription')"><CircleHelp class="h-4 w-4" /></Button>
                 </div>
               </template>
               <span v-else class="text-muted-foreground">-</span>
@@ -371,7 +367,7 @@ async function refresh(targets: ServerProfile[]) {
               <template v-if="accountDetails(server.id, file.name)">
                 <div class="flex items-center gap-1">
                   <span>{{ accountDetails(server.id, file.name).resetCredits?.availableCount ?? '未获取' }}<span v-if="accountDetails(server.id, file.name).resetCredits?.availableCount != null"> 次</span></span>
-                  <Button size="icon" variant="ghost" class="h-6 w-6 shrink-0 text-muted-foreground" title="查询重置过期时间" aria-label="查询重置过期时间" :disabled="querying" @click="queryAccountDetails(server, file, 'resetCredits')"><CircleHelp class="h-4 w-4" /></Button>
+                  <Button size="icon" variant="ghost" class="h-6 w-6 shrink-0 text-muted-foreground" title="查询重置过期时间" aria-label="查询重置过期时间" :disabled="stateFor(server.id).loading" @click="queryAccountDetails(server, file, 'resetCredits')"><CircleHelp class="h-4 w-4" /></Button>
                 </div>
                 <div v-for="(credit, index) in accountDetails(server.id, file.name).resetCredits?.credits || []" :key="credit.id || index" class="mt-1 text-muted-foreground">{{ credit.noExpiry ? '无过期时间' : formatAccountDate(credit.expiresAt) }}</div>
                 <div v-if="accountDetails(server.id, file.name).resetCredits?.credits?.length && accountDetails(server.id, file.name).resetCredits.availableCount > accountDetails(server.id, file.name).resetCredits.credits.length" class="mt-1 text-muted-foreground">其余 {{ accountDetails(server.id, file.name).resetCredits.availableCount - accountDetails(server.id, file.name).resetCredits.credits.length }} 次过期时间未获取</div>
